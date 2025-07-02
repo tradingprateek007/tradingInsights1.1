@@ -1,0 +1,10 @@
+yfinance>=0.2.37
+pandas>=1.5.0
+numpy>=1.24.0
+scipy>=1.10.0
+streamlit>=1.24.0
+plotly>=5.18.0
+statsmodels>=0.14.0
+scikit-learn>=1.3.0
+tensorflow>=2.14.0
+keras>=2.14.0
