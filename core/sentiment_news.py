@@ -1,77 +1,101 @@
+import streamlit as st
+from textblob import TextBlob
+import yfinance as yf
+from bs4 import BeautifulSoup
 import requests
 import pandas as pd
-from bs4 import BeautifulSoup
-from textblob import TextBlob
-import plotly.express as px
-import streamlit as st
-
+import datetime
+import plotly.graph_objects as go
 
 def fetch_finviz_news(ticker):
     url = f"https://finviz.com/quote.ashx?t={ticker}"
-    headers = {
-        "User-Agent": "Mozilla/5.0"
-    }
-
-    res = requests.get(url, headers=headers, timeout=10)
-    if res.status_code != 200:
-        raise ValueError("Could not fetch data from Finviz (status code {})".format(res.status_code))
-
-    soup = BeautifulSoup(res.text, "html.parser")
+    headers = {"User-Agent": "Mozilla/5.0"}
+    page = requests.get(url, headers=headers, timeout=10)
+    soup = BeautifulSoup(page.text, "html.parser")
     news_table = soup.find("table", class_="fullview-news-outer")
-
     if news_table is None:
-        raise ValueError("News table not found on Finviz. Page structure might have changed.")
-
+        return []
     rows = news_table.find_all("tr")
-    if not rows:
-        raise ValueError("No news rows found for this ticker.")
-
-    headlines = []
+    news_items = []
     for row in rows:
         tds = row.find_all("td")
-        if len(tds) < 2:
-            continue  # skip malformed row
-        timestamp = tds[0].text.strip()
-        title = tds[1].text.strip()
-        headlines.append({
-            "datetime": timestamp,
-            "headline": title
-        })
+        if len(tds) != 2:
+            continue
+        dt_text = tds[0].text.strip()
+        link = tds[1].a["href"]
+        headline = tds[1].a.text.strip()
+        # Parse date
+        try:
+            if ':' in dt_text:  # time only (same day)
+                date = datetime.datetime.today().date()
+            else:
+                date = datetime.datetime.strptime(dt_text, "%b-%d-%y").date()
+        except:
+            date = datetime.datetime.today().date()
+        news_items.append({"date": date, "headline": headline, "link": link})
+    return news_items
 
-    return pd.DataFrame(headlines)
 
-
-def analyze_sentiment(df):
-    df["polarity"] = df["headline"].apply(lambda x: TextBlob(x).sentiment.polarity)
-    df["sentiment"] = df["polarity"].apply(
-        lambda x: "Bullish" if x > 0.1 else "Bearish" if x < -0.1 else "Neutral"
-    )
-    return df
+def analyze_sentiment(news_items):
+    sentiment_data = []
+    for item in news_items:
+        blob = TextBlob(item["headline"])
+        polarity = blob.sentiment.polarity
+        sentiment = "positive" if polarity > 0 else "negative" if polarity < 0 else "neutral"
+        sentiment_data.append({**item, "polarity": polarity, "sentiment": sentiment})
+    return pd.DataFrame(sentiment_data)
 
 
 def render_sentiment_tab():
-    st.title("📈 Market News Sentiment")
-    ticker = st.text_input("Enter ticker symbol for sentiment", "AAPL").strip().upper()
+    st.title("📰 Market Sentiment Analysis")
 
+    ticker = st.text_input("Enter ticker for sentiment analysis", "AAPL").strip().upper()
     if not ticker:
         return
 
-    try:
-        df = fetch_finviz_news(ticker)
-        df = analyze_sentiment(df)
+    news_items = fetch_finviz_news(ticker)
+    if not news_items:
+        st.warning("No news headlines found.")
+        return
 
-        st.subheader("Recent Headlines & Sentiment")
-        st.dataframe(df[["datetime", "headline", "sentiment"]])
+    sentiment_df = analyze_sentiment(news_items)
 
-        # Pie chart
-        sentiment_counts = df["sentiment"].value_counts()
-        fig = px.pie(
-            names=sentiment_counts.index,
-            values=sentiment_counts.values,
-            title="Sentiment Distribution",
-            color_discrete_sequence=["green", "red", "gray"]
-        )
-        st.plotly_chart(fig, use_container_width=True)
+    st.subheader("Latest Headlines Sentiment")
+    st.dataframe(sentiment_df[["date", "headline", "sentiment", "polarity"]])
 
-    except Exception as e:
-        st.error(f"❌ Failed to fetch sentiment: {e}")
+    # Filter last 7 days
+    last_week = datetime.datetime.today().date() - datetime.timedelta(days=7)
+    week_df = sentiment_df[sentiment_df["date"] >= last_week]
+
+    if week_df.empty:
+        st.info("No news in the past week.")
+        return
+
+    # Aggregate counts
+    sentiment_counts = week_df["sentiment"].value_counts().to_dict()
+    pos_count = sentiment_counts.get("positive", 0)
+    neg_count = sentiment_counts.get("negative", 0)
+
+    st.subheader("Sentiment in the Last Week")
+
+    # Bar chart
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=["Positive"],
+        y=[pos_count],
+        marker_color='green',
+        name="Positive"
+    ))
+    fig.add_trace(go.Bar(
+        x=["Negative"],
+        y=[neg_count],
+        marker_color='red',
+        name="Negative"
+    ))
+    fig.update_layout(
+        title="Positive vs Negative Sentiment (Last 7 Days)",
+        yaxis_title="Number of Headlines",
+        xaxis_title="Sentiment",
+        showlegend=False
+    )
+    st.plotly_chart(fig, use_container_width=True)
