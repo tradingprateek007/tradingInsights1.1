@@ -24,9 +24,18 @@ def forecast_arima(prices, periods=20):
     return pd.Series(data=forecast.values, index=forecast_index)
 
 
-# LSTM forecast (patched for correct shape handling)
 def forecast_lstm(prices, periods=20, look_back=10):
-    df = pd.DataFrame({'Close': prices}).dropna()
+    from keras.models import Sequential
+    from keras.layers import LSTM, Dense
+    from sklearn.preprocessing import MinMaxScaler
+    import numpy as np
+    import pandas as pd
+
+    if len(prices) < (look_back + periods + 1):
+        raise ValueError("Not enough data for LSTM forecast.")
+
+    df = pd.DataFrame({'Close': prices})
+    df.dropna(inplace=True)
 
     scaler = MinMaxScaler()
     scaled = scaler.fit_transform(df)
@@ -36,30 +45,30 @@ def forecast_lstm(prices, periods=20, look_back=10):
         X.append(scaled[i:i + look_back])
         y.append(scaled[i + look_back])
 
-    X, y = np.array(X), np.array(y)
+    X = np.array(X)
+    y = np.array(y)
 
-    if len(X.shape) != 3:
-        raise ValueError(f"LSTM expects 3D input, got shape {X.shape}")
+    if X.shape[0] == 0:
+        raise ValueError("No valid training sequences.")
 
     model = Sequential()
-    model.add(LSTM(50, activation='relu', input_shape=(look_back, X.shape[2])))
+    model.add(LSTM(50, activation='relu', input_shape=(look_back, 1)))
     model.add(Dense(1))
     model.compile(optimizer='adam', loss='mse')
     model.fit(X, y, epochs=20, verbose=0)
 
-    # Forecast
+    input_seq = scaled[-look_back:].reshape(1, look_back, 1)
     preds = []
-    input_seq = scaled[-look_back:].reshape(1, look_back, X.shape[2])
 
     for _ in range(periods):
         next_pred = model.predict(input_seq, verbose=0)
-        preds.append(next_pred[0][0])
         next_pred_reshaped = next_pred.reshape(1, 1, 1)
         input_seq = np.concatenate((input_seq[:, 1:, :], next_pred_reshaped), axis=1)
+        preds.append(next_pred[0][0])
+
     forecast = scaler.inverse_transform(np.array(preds).reshape(-1, 1)).flatten()
     forecast_index = pd.bdate_range(prices.index[-1] + pd.Timedelta(days=1), periods=periods)
     return pd.Series(data=forecast, index=forecast_index)
-
 
 # Options-implied target range (expected move)
 def iv_based_target(current_price, iv=0.3, days=20):
@@ -94,7 +103,7 @@ def future_forecast(ticker):
 
     # Plot
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=prices.index, y=prices.values, name="Historical", line=dict(color='black')))
+    fig.add_trace(go.Scatter(x=prices.index, y=prices.values, name="Historical", line=dict(color='white')))
     fig.add_trace(go.Scatter(x=arima_f.index, y=arima_f.values, name="ARIMA Forecast", line=dict(color='blue')))
     fig.add_trace(go.Scatter(x=lstm_f.index, y=lstm_f.values, name="LSTM Forecast", line=dict(color='green')))
     fig.add_trace(go.Scatter(x=macd.index, y=macd.values, name="MACD", line=dict(color='orange', dash='dot')))
