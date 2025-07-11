@@ -84,41 +84,35 @@ def calculate_indicators(options_data, current_price):
 
 def generate_signal_with_indicators(indicators):
     signals = []
-    iv = indicators.get("avg_iv")
-    pcr = indicators.get("put_call_ratio")
-    oi_ratio = indicators.get("put_call_oi_ratio")
-    skew = indicators.get("vol_skew")
 
-    if pd.isna(iv):
-        signals.append("⚠️ IV unavailable")
-    elif iv < 0.3:
+    # IV Level
+    if indicators['avg_iv'] < 0.3:
         signals.append("Buy (IV is low)")
     else:
         signals.append("Sell (IV is high)")
 
-    if pd.isna(pcr):
-        signals.append("⚠️ Put/Call volume ratio unavailable")
-    elif pcr > 1:
-        signals.append("Contrarian Buy (High put volume today)")
+    # Volume Sentiment
+    if indicators['put_call_ratio'] > 1:
+        signals.append("Contrarian Buy (High put/call)")
     else:
-        signals.append("Cautious (Call volume dominating)")
+        signals.append("Bullish Flow (Call volume dominates)")
 
-    if pd.isna(oi_ratio):
-        signals.append("⚠️ Put/Call OI ratio unavailable")
-    elif oi_ratio > 1:
+    # Open Interest Sentiment
+    if indicators.get('oi_put_call_ratio', 0) > 1:
         signals.append("Bearish Positioning (More puts open)")
     else:
         signals.append("Bullish Positioning (More calls open)")
 
-    if pd.isna(skew):
-        signals.append("⚠️ Skew unavailable")
-    elif skew > 0:
-        signals.append("Bearish Skew (Put IV > Call IV)")
+    # Volatility Skew (Handle more realistically)
+    skew = indicators.get('vol_skew', 0)
+    if abs(skew) < 0.08:
+        signals.append("Neutral Skew (Typical hedging behavior)")
+    elif skew > 0.08:
+        signals.append("Bearish Skew (Put IV much higher)")
     else:
-        signals.append("Bullish Skew (Call IV > Put IV)")
+        signals.append("Bullish Skew (Call IV much higher)")
 
     return signals
-
 
 def explain_signal(indicators):
     iv = indicators.get("avg_iv")
