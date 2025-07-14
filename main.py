@@ -114,70 +114,97 @@ def generate_signal_with_indicators(indicators):
 
     return signals
 
-def explain_signal(indicators):
-    iv = indicators.get("avg_iv")
-    pcr = indicators.get("put_call_ratio")
-    oi_ratio = indicators.get("put_call_oi_ratio")
-    skew = indicators.get("vol_skew")
-    explanation = []
 
-    if pd.isna(iv):
-        explanation.append("IV unavailable.")
-    elif iv > 0.4:
-        explanation.append(f"IV is high ({iv:.2f}) → Options are expensive.")
-    elif iv < 0.2:
-        explanation.append(f"IV is low ({iv:.2f}) → Options are cheap, consider buying.")
-    else:
-        explanation.append(f"IV is moderate ({iv:.2f}) → Balanced pricing.")
-
-    if pd.isna(pcr):
-        explanation.append("Put/Call volume ratio unavailable.")
-    elif pcr > 1:
-        explanation.append(f"Today's Put/Call volume ratio is {pcr:.2f} → Bearish sentiment intraday.")
-    else:
-        explanation.append(f"Today's Put/Call volume ratio is {pcr:.2f} → More call activity.")
-
-    if pd.isna(oi_ratio):
-        explanation.append("Put/Call open interest ratio unavailable.")
-    elif oi_ratio > 1:
-        explanation.append(f"Open Interest ratio is {oi_ratio:.2f} → Market positioning is bearish.")
-    else:
-        explanation.append(f"Open Interest ratio is {oi_ratio:.2f} → Market is positioned bullishly.")
-
-    if pd.isna(skew):
-        explanation.append("Skew unavailable.")
-    elif skew > 0:
-        explanation.append(f"Skew = {skew:.3f} → Put IV higher → Bearish bias.")
-    else:
-        explanation.append(f"Skew = {skew:.3f} → Call IV higher → Bullish bias.")
-
-    return explanation
+import streamlit as st
+import plotly.express as px
+import yfinance as yf
 
 
 def generate_signal(ticker):
     st.subheader(f"📊 Option Signal Generator for {ticker}")
+
     try:
+        # 📝 Fetch option chain
         options_data = fetch_option_data(ticker)
         current_price = yf.Ticker(ticker).history(period="1d")["Close"].iloc[-1]
         indicators = calculate_indicators(options_data, current_price)
 
-        st.subheader("🔎 Option Sentiment")
-        for signal in generate_signal_with_indicators(indicators):
-            st.markdown(f"- **{signal}**")
+        # ✅ Display Sentiment Signals
+        display_signals(indicators)
 
-        st.subheader("💡 Explanation")
-        for line in explain_signal(indicators):
-            st.markdown(f"- {line}")
+        # 🧠 Display Detailed Explanations
+        display_explanations(indicators)
 
-        st.subheader("🧪 Raw Options Data")
-        st.dataframe(options_data[[
-            'contractSymbol', 'type', 'strike', 'lastPrice',
-            'impliedVolatility', 'volume', 'openInterest'
-        ]])
+        # 📈 Show Skew Curve
+        display_skew_curve(options_data)
+
+        # 🧪 Show Raw Options Data
+        display_raw_options(options_data)
 
     except Exception as e:
         st.error(f"Error generating signal: {e}")
 
+
+def display_signals(indicators):
+    st.subheader("🔎 Option Sentiment")
+    signals = generate_signal_with_indicators(indicators)
+    for signal in signals:
+        # Example confidence based on IV (dummy logic here)
+        conf = 75 if indicators['avg_iv'] > 0.5 else 60
+        st.markdown(f"- **{signal}** (confidence: {conf}%)")
+
+
+def display_explanations(indicators):
+    st.subheader("💡 Explanation")
+    lines = explain_signal(indicators)
+    for line in lines:
+        st.markdown(f"- {line}")
+
+
+def display_skew_curve(options_data):
+    st.subheader("📈 Implied Volatility Skew")
+    fig = px.line(
+        options_data,
+        x='strike',
+        y='impliedVolatility',
+        color='type',
+        title='Implied Volatility by Strike (Skew)'
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def display_raw_options(options_data):
+    st.subheader("🧪 Raw Options Data")
+    st.dataframe(options_data[[
+        'contractSymbol', 'type', 'strike', 'lastPrice',
+        'impliedVolatility', 'volume', 'openInterest'
+    ]])
+
+
+def explain_signal(indicators):
+    lines = []
+    iv = indicators['avg_iv']
+    skew = indicators['vol_skew']
+    put_call = indicators['put_call_ratio']
+
+    if iv > 0.5:
+        lines.append(f"Implied volatility is elevated (IV={iv:.2f}) — options are expensive, consider selling premium.")
+    elif iv < 0.2:
+        lines.append(f"Implied volatility is low (IV={iv:.2f}) — options are cheap, consider buying premium.")
+
+    if skew > 0:
+        lines.append(f"Put IV > Call IV by {skew:.3f} → bearish skew → bearish sentiment priced in.")
+    elif skew < 0:
+        lines.append(f"Call IV > Put IV by {abs(skew):.3f} → bullish skew → bullish sentiment priced in.")
+
+    if put_call > 1:
+        lines.append(f"Put/Call ratio is {put_call:.2f} → more puts traded → bearish bias.")
+    elif put_call < 0.8:
+        lines.append(f"Put/Call ratio is {put_call:.2f} → more calls traded → bullish bias.")
+    else:
+        lines.append(f"Put/Call ratio is {put_call:.2f} → neutral sentiment.")
+
+    return lines
 
 def main():
     st.set_page_config(layout="wide")
