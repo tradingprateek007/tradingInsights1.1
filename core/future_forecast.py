@@ -1,120 +1,135 @@
 import streamlit as st
-import yfinance as yf
 import pandas as pd
 import numpy as np
+import yfinance as yf
 from statsmodels.tsa.arima.model import ARIMA
+from prophet import Prophet
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error
 from keras.models import Sequential
 from keras.layers import LSTM, Dense
-from sklearn.preprocessing import MinMaxScaler
 import plotly.graph_objects as go
+import ta
 
+def fetch_history(ticker, period="1y"):
+    df = yf.Ticker(ticker).history(period=period)
+    return df
 
-# Fetch price data
-def fetch_history(ticker, period="5y"):
-    return yf.Ticker(ticker).history(period=period)["Close"]
+def add_features(df):
+    df = df.copy()
+    df["rsi"] = ta.momentum.RSIIndicator(df["Close"]).rsi()
+    macd = ta.trend.MACD(df["Close"])
+    df["macd"] = macd.macd()
+    df["volume"] = df["Volume"]
+    df.dropna(inplace=True)
+    return df
 
-
-# ARIMA forecast
-def forecast_arima(prices, periods=20):
-    model = ARIMA(prices, order=(5, 1, 0))
+def forecast_arima(prices, periods):
+    model = ARIMA(prices, order=(5,1,0))
     fit = model.fit()
     forecast = fit.forecast(steps=periods)
     forecast_index = pd.bdate_range(prices.index[-1] + pd.Timedelta(days=1), periods=periods)
-    return pd.Series(data=forecast.values, index=forecast_index)
+    return pd.Series(forecast.values, index=forecast_index)
 
+def forecast_prophet(prices, periods):
+    # Prophet does not support timezone-aware datetimes
+    ds = prices.index.tz_localize(None)  # remove tz info
+    df = pd.DataFrame({"ds": ds, "y": prices.values})
+    m = Prophet()
+    m.fit(df)
+    future = m.make_future_dataframe(periods=periods)
+    forecast = m.predict(future)
+    pred = forecast.tail(periods).set_index("ds")["yhat"]
+    return pred
 
-def forecast_lstm(prices, periods=20, look_back=10):
-    from keras.models import Sequential
-    from keras.layers import LSTM, Dense
-    from sklearn.preprocessing import MinMaxScaler
-    import numpy as np
-    import pandas as pd
-
-    if len(prices) < (look_back + periods + 1):
-        raise ValueError("Not enough data for LSTM forecast.")
-
-    df = pd.DataFrame({'Close': prices})
-    df.dropna(inplace=True)
-
+def forecast_lstm(df, periods, look_back=10):
+    features = ["Close", "rsi", "macd", "volume"]
     scaler = MinMaxScaler()
-    scaled = scaler.fit_transform(df)
+    scaled = scaler.fit_transform(df[features].values)
+
+    if scaled.shape[0] < look_back + periods:
+        raise ValueError(f"Not enough data: have {scaled.shape[0]} rows, need at least {look_back+periods}")
 
     X, y = [], []
     for i in range(len(scaled) - look_back - periods):
-        X.append(scaled[i:i + look_back])
-        y.append(scaled[i + look_back])
+        X.append(scaled[i:i+look_back])
+        y.append(scaled[i+look_back][0])  # Close price
 
-    X = np.array(X)
-    y = np.array(y)
-
-    if X.shape[0] == 0:
-        raise ValueError("No valid training sequences.")
+    X, y = np.array(X), np.array(y)
 
     model = Sequential()
-    model.add(LSTM(50, activation='relu', input_shape=(look_back, 1)))
+    model.add(LSTM(50, activation='relu', input_shape=(look_back, X.shape[2])))
     model.add(Dense(1))
     model.compile(optimizer='adam', loss='mse')
     model.fit(X, y, epochs=20, verbose=0)
 
-    input_seq = scaled[-look_back:].reshape(1, look_back, 1)
+    last_sequence = scaled[-look_back:]
+    input_seq = last_sequence.reshape(1, look_back, scaled.shape[1])
+
     preds = []
-
     for _ in range(periods):
-        next_pred = model.predict(input_seq, verbose=0)
-        next_pred_reshaped = next_pred.reshape(1, 1, 1)
-        input_seq = np.concatenate((input_seq[:, 1:, :], next_pred_reshaped), axis=1)
-        preds.append(next_pred[0][0])
+        pred = model.predict(input_seq, verbose=0)
+        next_step = np.zeros((1, 1, scaled.shape[1]))
+        next_step[0, 0, 0] = pred  # predicted Close
+        input_seq = np.append(input_seq[:,1:,:], next_step, axis=1)
+        preds.append(pred[0][0])
 
-    forecast = scaler.inverse_transform(np.array(preds).reshape(-1, 1)).flatten()
-    forecast_index = pd.bdate_range(prices.index[-1] + pd.Timedelta(days=1), periods=periods)
-    return pd.Series(data=forecast, index=forecast_index)
+    forecast = scaler.inverse_transform(
+        np.hstack([np.array(preds).reshape(-1,1), np.zeros((periods,scaled.shape[1]-1))])
+    )[:,0]
 
-# Options-implied target range (expected move)
-def iv_based_target(current_price, iv=0.3, days=20):
-    daily_vol = iv / np.sqrt(252)
-    expected_move = current_price * daily_vol * np.sqrt(days)
-    return current_price - expected_move, current_price + expected_move
+    forecast_index = pd.bdate_range(df.index[-1] + pd.Timedelta(days=1), periods=periods)
+    return pd.Series(forecast, index=forecast_index)
 
+def compute_metrics(actual, pred):
+    rmse = np.sqrt(mean_squared_error(actual, pred))
+    mape = mean_absolute_percentage_error(actual, pred) * 100
+    return rmse, mape
 
-# MACD calculation
-def compute_macd(prices):
-    ema12 = prices.ewm(span=12, adjust=False).mean()
-    ema26 = prices.ewm(span=26, adjust=False).mean()
-    macd = ema12 - ema26
-    signal = macd.ewm(span=9, adjust=False).mean()
-    return macd, signal
-
-
-# Main Forecast Tab
 def future_forecast(ticker):
-    st.title("Forecast Models: ARIMA, LSTM, IV-Based")
+    st.title("📈 Future Forecast (Enhanced)")
 
-    prices = yf.Ticker(ticker).history(period="6mo")["Close"]
-    if prices.empty:
-        st.warning("No price data found.")
+    forecast_days = st.slider("Forecast horizon (days)", min_value=1, max_value=30, value=7)
+
+    df_raw = fetch_history(ticker, period="1y")
+    if df_raw.empty or len(df_raw) < 60:
+        st.warning("Not enough data to forecast.")
         return
 
-    macd, signal = compute_macd(prices)
-    current_price = prices.iloc[-1]
-    arima_f = forecast_arima(prices)
-    lstm_f = forecast_lstm(prices)
-    iv_lower, iv_upper = iv_based_target(current_price)
+    df = add_features(df_raw)
 
-    # Plot
+    prices = df["Close"]
+    actual = prices[-forecast_days:]
+
+    arima_f = forecast_arima(prices, forecast_days)
+    prophet_f = forecast_prophet(prices, forecast_days)
+    lstm_f = forecast_lstm(df, forecast_days)
+
+    # Metrics
+    actual_vs = prices[-forecast_days:]
+    arima_rmse, arima_mape = compute_metrics(actual_vs, arima_f.head(len(actual_vs)))
+    lstm_rmse, lstm_mape = compute_metrics(actual_vs, lstm_f.head(len(actual_vs)))
+    prophet_rmse, prophet_mape = compute_metrics(actual_vs, prophet_f.head(len(actual_vs)))
+
+    st.subheader("Forecast Metrics")
+    metrics = pd.DataFrame({
+        "Model": ["ARIMA", "LSTM", "Prophet"],
+        "RMSE": [arima_rmse, lstm_rmse, prophet_rmse],
+        "MAPE (%)": [arima_mape, lstm_mape, prophet_mape]
+    })
+    st.dataframe(metrics)
+
+    st.subheader("Forecast Visualization")
+
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=prices.index, y=prices.values, name="Historical", line=dict(color='white')))
-    fig.add_trace(go.Scatter(x=arima_f.index, y=arima_f.values, name="ARIMA Forecast", line=dict(color='blue')))
-    fig.add_trace(go.Scatter(x=lstm_f.index, y=lstm_f.values, name="LSTM Forecast", line=dict(color='green')))
-    fig.add_trace(go.Scatter(x=macd.index, y=macd.values, name="MACD", line=dict(color='orange', dash='dot')))
-    fig.add_trace(go.Scatter(x=signal.index, y=signal.values, name="Signal Line", line=dict(color='red', dash='dot')))
-
-    fig.add_hline(y=iv_upper, line=dict(dash='dash', color='red'), name="IV Upper")
-    fig.add_hline(y=iv_lower, line=dict(dash='dash', color='green'), name="IV Lower")
+    fig.add_trace(go.Scatter(x=prices.index, y=prices.values, name="Historical", line=dict(color="blue")))
+    fig.add_trace(go.Scatter(x=arima_f.index, y=arima_f.values, name="ARIMA Forecast", line=dict(dash="dot", color="orange")))
+    fig.add_trace(go.Scatter(x=lstm_f.index, y=lstm_f.values, name="LSTM Forecast", line=dict(dash="dot", color="green")))
+    fig.add_trace(go.Scatter(x=prophet_f.index, y=prophet_f.values, name="Prophet Forecast", line=dict(dash="dot", color="red")))
     fig.update_layout(
-        title=f"{ticker} Forecast (Next {len(arima_f)} Days)",
+        title=f"{ticker} Forecast ({forecast_days} days ahead)",
         xaxis_title="Date",
-        yaxis_title="Price",
-        legend_title="Models"
+        yaxis_title="Price"
     )
 
     st.plotly_chart(fig, use_container_width=True)
