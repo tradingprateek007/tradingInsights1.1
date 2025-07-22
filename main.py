@@ -8,6 +8,8 @@ import plotly.graph_objects as go
 import streamlit as st
 import plotly.express as px
 from core import past_forecast, sentiment_news
+
+from core import past_forecast, sentiment_news, alpaca_trading
 from core import future_forecast
 from core.momentum import momentum_burst_tab
 from core.sentiment_news import render_sentiment_tab
@@ -16,6 +18,38 @@ from core.sentiment_news import render_sentiment_tab
 # def fetch_history(ticker, period="5y"):
 #     return yf.Ticker(ticker).history(period=period)["Close"]
 
+def render_trading_tab():
+    st.title("📈 Make Trades with Alpaca (Paper)")
+
+    acc = alpaca_trading.get_account()
+    st.metric("Account Equity", f"${acc.equity}")
+    st.metric("Buying Power", f"${acc.buying_power}")
+
+    st.subheader("Your Current Positions")
+    positions = alpaca_trading.get_positions()
+    if positions:
+        pos_data = []
+        for p in positions:
+            pos_data.append({
+                "Symbol": p.symbol,
+                "Qty": p.qty,
+                "Side": p.side,
+                "Market Value": p.market_value
+            })
+        st.table(pos_data)
+    else:
+        st.info("No current positions.")
+
+    st.subheader("Place a New Trade")
+    symbol = st.text_input("Ticker Symbol", value="AAPL").upper()
+    qty = st.number_input("Quantity", min_value=1, value=1)
+    side = st.selectbox("Side", ["buy", "sell"])
+    if st.button("Submit Order"):
+        try:
+            order = alpaca_trading.place_order(symbol, qty, side)
+            st.success(f"Order submitted: {order.id}")
+        except Exception as e:
+            st.error(f"Order failed: {e}")
 
 def compute_zscore(series, window=20):
     return zscore(series[-window:])[-1]
@@ -209,12 +243,13 @@ def main():
     st.set_page_config(layout="wide")
     st.title("🧠 Options Strategy Dashboard")
 
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
         "Live Signals",
         "Backtest Strategy",
         "Signal Generation",
         "Momentum Bursts",
-        "Market Sentiment"
+        "Market Sentiment",
+        "Trading Tab"
     ])
     with tab1:
         ticker = st.text_input("Enter Stock Ticker", "AAPL").strip().upper()
@@ -236,6 +271,8 @@ def main():
 
     with tab5:
         render_sentiment_tab()
+    with tab6:
+        render_trading_tab()
         # st.header("Live Market News & Sentiment")
         # ticker = st.text_input("Enter stock ticker for sentiment analysis", "AAPL").strip().upper()
         #
