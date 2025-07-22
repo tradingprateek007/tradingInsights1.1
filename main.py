@@ -13,43 +13,16 @@ from core import past_forecast, sentiment_news, alpaca_trading
 from core import future_forecast
 from core.momentum import momentum_burst_tab
 from core.sentiment_news import render_sentiment_tab
+import streamlit as st
+import plotly.express as px
+import yfinance as yf
+
+from core.trading_tab import render_trading_tab
 
 
 # def fetch_history(ticker, period="5y"):
 #     return yf.Ticker(ticker).history(period=period)["Close"]
 
-def render_trading_tab():
-    st.title("📈 Make Trades with Alpaca (Paper)")
-
-    acc = alpaca_trading.get_account()
-    st.metric("Account Equity", f"${acc.equity}")
-    st.metric("Buying Power", f"${acc.buying_power}")
-
-    st.subheader("Your Current Positions")
-    positions = alpaca_trading.get_positions()
-    if positions:
-        pos_data = []
-        for p in positions:
-            pos_data.append({
-                "Symbol": p.symbol,
-                "Qty": p.qty,
-                "Side": p.side,
-                "Market Value": p.market_value
-            })
-        st.table(pos_data)
-    else:
-        st.info("No current positions.")
-
-    st.subheader("Place a New Trade")
-    symbol = st.text_input("Ticker Symbol", value="AAPL").upper()
-    qty = st.number_input("Quantity", min_value=1, value=1)
-    side = st.selectbox("Side", ["buy", "sell"])
-    if st.button("Submit Order"):
-        try:
-            order = alpaca_trading.place_order(symbol, qty, side)
-            st.success(f"Order submitted: {order.id}")
-        except Exception as e:
-            st.error(f"Order failed: {e}")
 
 def compute_zscore(series, window=20):
     return zscore(series[-window:])[-1]
@@ -148,9 +121,6 @@ def generate_signal_with_indicators(indicators):
         signals.append("Bullish Skew (Call IV much higher)")
 
     return signals
-
-
-
 
 
 def generate_signal(ticker):
@@ -273,17 +243,7 @@ def main():
         render_sentiment_tab()
     with tab6:
         render_trading_tab()
-        # st.header("Live Market News & Sentiment")
-        # ticker = st.text_input("Enter stock ticker for sentiment analysis", "AAPL").strip().upper()
-        #
-        # if st.button("Fetch Sentiment"):
-        #     try:
-        #         st.info(f"Fetching news for {ticker}...")
-        #         df = sentiment_news.fetch_finviz_news(ticker)
-        #         df = sentiment_news.analyze_sentiment(df)
-        #         st.dataframe(df[["datetime", "headline", "sentiment"]])
-        #     except Exception as e:
-        #         st.error(f"Failed to fetch sentiment: {e}")
+
 
 if __name__ == "__main__":
     main()
