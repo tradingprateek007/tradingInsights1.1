@@ -5,7 +5,8 @@ import streamlit as st
 from datetime import datetime, timedelta
 from scipy.stats import zscore
 import plotly.graph_objects as go
-
+import streamlit as st
+import plotly.express as px
 from core import past_forecast, sentiment_news
 from core import future_forecast
 from core.momentum import momentum_burst_tab
@@ -115,9 +116,7 @@ def generate_signal_with_indicators(indicators):
     return signals
 
 
-import streamlit as st
-import plotly.express as px
-import yfinance as yf
+
 
 
 def generate_signal(ticker):
