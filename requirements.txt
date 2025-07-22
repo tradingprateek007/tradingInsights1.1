@@ -126,3 +126,4 @@ wrapt==1.17.2
 yarl==1.20.1
 yfinance==0.2.64
 zipp==3.23.0
+alpha_vantage
