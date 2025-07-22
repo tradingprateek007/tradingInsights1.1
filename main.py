@@ -8,9 +8,16 @@ import plotly.graph_objects as go
 import streamlit as st
 import plotly.express as px
 from core import past_forecast, sentiment_news
+
+from core import past_forecast, sentiment_news, alpaca_trading
 from core import future_forecast
 from core.momentum import momentum_burst_tab
 from core.sentiment_news import render_sentiment_tab
+import streamlit as st
+import plotly.express as px
+import yfinance as yf
+
+from core.trading_tab import render_trading_tab
 
 
 # def fetch_history(ticker, period="5y"):
@@ -116,9 +123,6 @@ def generate_signal_with_indicators(indicators):
     return signals
 
 
-
-
-
 def generate_signal(ticker):
     st.subheader(f"📊 Option Signal Generator for {ticker}")
 
@@ -209,12 +213,13 @@ def main():
     st.set_page_config(layout="wide")
     st.title("🧠 Options Strategy Dashboard")
 
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
         "Live Signals",
         "Backtest Strategy",
         "Signal Generation",
         "Momentum Bursts",
-        "Market Sentiment"
+        "Market Sentiment",
+        "Trading Tab"
     ])
     with tab1:
         ticker = st.text_input("Enter Stock Ticker", "AAPL").strip().upper()
@@ -236,17 +241,9 @@ def main():
 
     with tab5:
         render_sentiment_tab()
-        # st.header("Live Market News & Sentiment")
-        # ticker = st.text_input("Enter stock ticker for sentiment analysis", "AAPL").strip().upper()
-        #
-        # if st.button("Fetch Sentiment"):
-        #     try:
-        #         st.info(f"Fetching news for {ticker}...")
-        #         df = sentiment_news.fetch_finviz_news(ticker)
-        #         df = sentiment_news.analyze_sentiment(df)
-        #         st.dataframe(df[["datetime", "headline", "sentiment"]])
-        #     except Exception as e:
-        #         st.error(f"Failed to fetch sentiment: {e}")
+    with tab6:
+        render_trading_tab()
+
 
 if __name__ == "__main__":
     main()
