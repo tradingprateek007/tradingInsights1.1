@@ -89,7 +89,7 @@ def compute_metrics(actual, pred):
 def future_forecast(ticker):
     st.title("📈 Future Forecast (Enhanced)")
 
-    forecast_days = st.slider("Forecast horizon (days)", min_value=1, max_value=30, value=7)
+    forecast_days = st.slider("Forecast horizon (days)", min_value=1, max_value=30, value=30)
 
     df_raw = fetch_history(ticker, period="1y")
     if df_raw.empty or len(df_raw) < 60:
