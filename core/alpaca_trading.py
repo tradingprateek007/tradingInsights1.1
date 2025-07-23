@@ -1,58 +1,36 @@
-import os
-from alpaca_trade_api.rest import REST
-import streamlit as st
-
-# Default client for owner
-API_KEY = os.getenv("ALPACA_API_KEY", st.secrets.get("ALPACA_API_KEY"))
-SECRET_KEY = os.getenv("ALPACA_SECRET_KEY", st.secrets.get("ALPACA_SECRET_KEY"))
-BASE_URL = os.getenv("ALPACA_BASE_URL", "https://paper-api.alpaca.markets")
-
-api = REST(API_KEY, SECRET_KEY, BASE_URL)
+from alpaca.trading.client import TradingClient
+from alpaca.trading.requests import MarketOrderRequest
+from alpaca.trading.enums import OrderSide, TimeInForce
 
 
-def get_account():
-    return api.get_account()
-
-
-def get_positions():
-    return api.list_positions()
-
-
-def place_order(symbol, qty, side, order_type="market", time_in_force="gtc"):
-    order = api.submit_order(
-        symbol=symbol,
-        qty=qty,
-        side=side,
-        type=order_type,
-        time_in_force=time_in_force,
-    )
-    return order
-
-
-# ✅ New helpers with client argument
-def get_account_with_client(client):
+def get_account_with_client(client: TradingClient):
+    """
+    Get account information using an alpaca-py TradingClient.
+    """
     return client.get_account()
 
 
-def get_positions_with_client(client):
-    return client.list_positions()
+def get_positions_with_client(client: TradingClient):
+    """
+    Get all open stock positions using an alpaca-py TradingClient.
+    """
+    return client.get_all_positions()
 
 
-def place_order_with_client(api, symbol, qty, side, asset_type="stock"):
+def place_order_with_client(client: TradingClient, symbol, qty, side, asset_type="stock"):
+    """
+    Submit a stock order using an alpaca-py TradingClient.
+    Options are handled separately in trading_tab.py using direct REST calls.
+    """
     if asset_type == "stock":
-        # omit time_in_force entirely — Alpaca will default to correct one
-        return api.submit_order(
+        order_req = MarketOrderRequest(
             symbol=symbol,
             qty=qty,
-            side=side,
-            type="market",
-            time_in_force = "gtc"
-
+            side=OrderSide.BUY if side == "buy" else OrderSide.SELL,
+            time_in_force=TimeInForce.GTC
         )
+        order = client.submit_order(order_req)
+        return order
     else:
-        return api.submit_order(
-            symbol=symbol,
-            qty=qty,
-            side=side,
-            type="market",
-        )
+        # Options handled separately
+        raise NotImplementedError("Option orders are handled via REST API in trading_tab.py")

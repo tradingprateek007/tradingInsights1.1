@@ -1,7 +1,9 @@
 import streamlit as st
 import requests
-from alpaca_trade_api.rest import REST
-from core.alpaca_trading import place_order_with_client, get_account_with_client, get_positions_with_client
+from alpaca.trading.client import TradingClient
+from alpaca.trading.requests import MarketOrderRequest
+from alpaca.trading.enums import OrderSide, TimeInForce
+from core.alpaca_trading import get_account_with_client, get_positions_with_client
 
 
 def fetch_options_contracts(symbol, api_key, secret_key, base_url="https://paper-api.alpaca.markets"):
@@ -35,6 +37,25 @@ def get_options_positions(api_key, secret_key, base_url="https://paper-api.alpac
     return resp.json()
 
 
+def place_option_order(option_symbol, qty, side, api_key, secret_key, base_url="https://paper-api.alpaca.markets"):
+    url = f"{base_url}/v2/options/orders"
+    headers = {
+        "accept": "application/json",
+        "APCA-API-KEY-ID": api_key,
+        "APCA-API-SECRET-KEY": secret_key,
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "symbol": option_symbol,
+        "qty": qty,
+        "side": side,
+        "type": "market"
+    }
+    resp = requests.post(url, headers=headers, json=payload)
+    resp.raise_for_status()
+    return resp.json()
+
+
 def render_trading_tab():
     st.title("📈 Make Trades with Alpaca (Paper)")
 
@@ -58,7 +79,7 @@ def render_trading_tab():
         st.warning("⚠️ Please enter valid credentials or PIN to continue.")
         st.stop()
 
-    trading_client = REST(api_key, secret_key, base_url)
+    trading_client = TradingClient(api_key, secret_key, paper=True)
 
     acc = get_account_with_client(trading_client)
     st.metric("Account Equity", f"${acc.equity}")
@@ -139,13 +160,19 @@ def render_trading_tab():
     if submitted:
         try:
             if asset_type == "Stock":
-                order = place_order_with_client(trading_client, symbol, qty, side, asset_type="stock")
+                order_req = MarketOrderRequest(
+                    symbol=symbol,
+                    qty=qty,
+                    side=OrderSide.BUY if side == "buy" else OrderSide.SELL,
+                    time_in_force=TimeInForce.GTC
+                )
+                order = trading_client.submit_order(order_req)
                 st.success(f"✅ Stock order submitted: {order.id}")
             else:
                 if not option_symbol:
                     st.error("❌ No valid option contract selected.")
                     return
-                order = place_order_with_client(trading_client, option_symbol, qty, side, asset_type="option")
-                st.success(f"✅ Option order submitted: {order.id}")
+                order = place_option_order(option_symbol, qty, side, api_key, secret_key, base_url)
+                st.success(f"✅ Option order submitted: {order['id']}")
         except Exception as e:
             st.error(f"❌ Order failed: {e}")
