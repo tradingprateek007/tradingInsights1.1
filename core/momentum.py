@@ -21,6 +21,7 @@ def detect_momentum_bursts(prices, window=5, threshold=2.5):
 
 def momentum_burst_tab():
     st.header("Momentum Bursts")
+
     ticker = st.text_input("Ticker", "AAPL").strip().upper()
     if not ticker:
         return

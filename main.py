@@ -11,6 +11,7 @@ from core import past_forecast, sentiment_news
 
 from core import past_forecast, sentiment_news, alpaca_trading
 from core import future_forecast
+from core.insider_sentiment import render_insider_sentiment_tab
 from core.momentum import momentum_burst_tab
 from core.sentiment_news import render_sentiment_tab
 import streamlit as st
@@ -127,26 +128,62 @@ def generate_signal(ticker):
     st.subheader(f"📊 Option Signal Generator for {ticker}")
 
     try:
-        # 📝 Fetch option chain
         options_data = fetch_option_data(ticker)
         current_price = yf.Ticker(ticker).history(period="1d")["Close"].iloc[-1]
         indicators = calculate_indicators(options_data, current_price)
 
-        # ✅ Display Sentiment Signals
-        display_signals(indicators)
+        st.subheader("🔎 Option Sentiment")
+        signals = generate_signal_with_indicators(indicators)
+        for signal in signals:
+            conf = 75 if indicators['avg_iv'] > 0.5 else 60
+            st.markdown(f"- **{signal}** (confidence: {conf}%)")
 
-        # 🧠 Display Detailed Explanations
-        display_explanations(indicators)
+        st.subheader("📌 What to Do?")
 
-        # 📈 Show Skew Curve
+        actionable = []
+        iv = indicators['avg_iv']
+        put_call = indicators['put_call_ratio']
+        oi_ratio = indicators['put_call_oi_ratio']
+        skew = indicators['vol_skew']
+
+        if iv < 0.2:
+            actionable.append("✅ Implied Volatility is low — Consider **Buying Call or Put**.")
+        elif iv > 0.5:
+            actionable.append("⚠️ Implied Volatility is high — Consider **Selling Premium** or **Closing existing option positions**.")
+
+        if put_call > 1.2:
+            actionable.append("📉 High Put Volume — Bearish flow. Consider **Buying Puts** or **Closing Call positions**.")
+        elif put_call < 0.8:
+            actionable.append("📈 High Call Volume — Bullish flow. Consider **Buying Calls** or **Closing Put positions**.")
+
+        if oi_ratio > 1.2:
+            actionable.append("💼 More Puts open — Bearish Positioning. Consider defensive trades.")
+        elif oi_ratio < 0.8:
+            actionable.append("💼 More Calls open — Bullish Positioning. Momentum may follow through.")
+
+        if skew > 0.1:
+            actionable.append("⚠️ Bearish skew detected — Put IV is much higher than Call IV. Sentiment **already priced in**.")
+        elif skew < -0.1:
+            actionable.append("📈 Bullish skew detected — Call IV dominates. **Potential bullish breakout expected**.")
+        else:
+            actionable.append("🟰 Skew is neutral — No strong divergence.")
+
+        for a in actionable:
+            st.markdown(f"- {a}")
+
+        st.subheader("💡 Explanation")
+        lines = explain_signal(indicators)
+        for line in lines:
+            st.markdown(f"- {line}")
+
+        st.subheader("📈 Implied Volatility Skew")
         display_skew_curve(options_data)
 
-        # 🧪 Show Raw Options Data
+        st.subheader("🧪 Raw Options Data")
         display_raw_options(options_data)
 
     except Exception as e:
         st.error(f"Error generating signal: {e}")
-
 
 def display_signals(indicators):
     st.subheader("🔎 Option Sentiment")
@@ -186,26 +223,57 @@ def display_raw_options(options_data):
 
 def explain_signal(indicators):
     lines = []
-    iv = indicators['avg_iv']
-    skew = indicators['vol_skew']
-    put_call = indicators['put_call_ratio']
+    iv = indicators.get('avg_iv', np.nan)
+    skew = indicators.get('vol_skew', np.nan)
+    put_call = indicators.get('put_call_ratio', np.nan)
 
-    if iv > 0.5:
-        lines.append(f"Implied volatility is elevated (IV={iv:.2f}) — options are expensive, consider selling premium.")
-    elif iv < 0.2:
-        lines.append(f"Implied volatility is low (IV={iv:.2f}) — options are cheap, consider buying premium.")
+    # Implied Volatility
+    if pd.notna(iv):
+        lines.append(f"**Implied Volatility (IV)**: The average IV is {iv:.2f}.")
+        if iv > 0.5:
+            lines.append("- _Formal_: Elevated IV suggests that options are currently priced at a premium due to heightened market uncertainty or expected volatility.")
+            lines.append("- _Simple_: Options are expensive right now — traders expect big price moves.")
+            lines.append("👉 **Strategy Tip**: Consider selling options (e.g., credit spreads or covered calls) to benefit from high premiums.")
+        elif iv < 0.2:
+            lines.append("- _Formal_: Low IV implies options are relatively cheap, reflecting stable market expectations.")
+            lines.append("- _Simple_: Options are cheap — market isn’t expecting major moves.")
+            lines.append("👉 **Strategy Tip**: Consider buying calls or puts if you anticipate upcoming movement.")
 
-    if skew > 0:
-        lines.append(f"Put IV > Call IV by {skew:.3f} → bearish skew → bearish sentiment priced in.")
-    elif skew < 0:
-        lines.append(f"Call IV > Put IV by {abs(skew):.3f} → bullish skew → bullish sentiment priced in.")
+    # Skew
+    if pd.notna(skew):
+        lines.append(f"**Volatility Skew**: The skew is {skew:.3f}.")
+        if skew > 0:
+            lines.append("- _Formal_: Put IV exceeds Call IV, indicating demand for downside protection — a bearish indicator.")
+            lines.append("- _Simple_: Traders are buying puts — they might be worried the stock will drop.")
+            lines.append("👉 **Strategy Tip**: Market sentiment is cautious. Look at protective puts or bear spreads.")
+        elif skew < 0:
+            lines.append("- _Formal_: Call IV exceeds Put IV, suggesting optimistic sentiment and demand for upside exposure.")
+            lines.append("- _Simple_: Traders are buying calls — they might expect the stock to rise.")
+            lines.append("👉 **Strategy Tip**: Bullish momentum. Explore long calls or bull call spreads.")
+        else:
+            lines.append("- _Formal_: Balanced IV skew suggests neutrality or equal hedging demand.")
+            lines.append("- _Simple_: No strong lean — traders are hedging both directions.")
+            lines.append("👉 **Strategy Tip**: Consider neutral strategies like iron condors.")
 
-    if put_call > 1:
-        lines.append(f"Put/Call ratio is {put_call:.2f} → more puts traded → bearish bias.")
-    elif put_call < 0.8:
-        lines.append(f"Put/Call ratio is {put_call:.2f} → more calls traded → bullish bias.")
-    else:
-        lines.append(f"Put/Call ratio is {put_call:.2f} → neutral sentiment.")
+    # Put/Call Volume Ratio
+    if pd.notna(put_call):
+        lines.append(f"**Put/Call Volume Ratio**: The ratio is {put_call:.2f}.")
+        if put_call > 1:
+            lines.append("- _Formal_: A high ratio indicates more puts are being traded than calls, suggesting bearish sentiment.")
+            lines.append("- _Simple_: More puts than calls — traders may be betting against the stock.")
+            lines.append("👉 **Strategy Tip**: Caution warranted. Evaluate closing bullish positions or deploying bearish ones.")
+        elif put_call < 0.8:
+            lines.append("- _Formal_: A low ratio reflects heavier call trading, indicative of bullish sentiment.")
+            lines.append("- _Simple_: More calls than puts — traders are betting the stock goes up.")
+            lines.append("👉 **Strategy Tip**: Reinforce bullish strategies or initiate new long call positions.")
+        else:
+            lines.append("- _Formal_: Balanced put/call activity implies neutral sentiment.")
+            lines.append("- _Simple_: Market looks indecisive.")
+            lines.append("👉 **Strategy Tip**: Use range-bound strategies or wait for clearer signals.")
+
+    # Summary Suggestion
+    lines.append("🧠 **Interpretation Summary**: Use the above indicators holistically. For instance, a low IV + bullish skew + low put/call ratio strengthens a call-buying thesis.")
+    lines.append("🧭 **Action Decision**: Match strategy with conditions — high IV + bearish skew = sell calls or buy puts; low IV + bullish skew = buy calls.")
 
     return lines
 
@@ -213,13 +281,14 @@ def main():
     st.set_page_config(layout="wide")
     st.title("🧠 Options Strategy Dashboard")
 
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
         "Live Signals",
         "Backtest Strategy",
         "Signal Generation",
         "Momentum Bursts",
         "Market Sentiment",
-        "Trading Tab"
+        "Insider Sentiment",
+        "Trading Tab",
     ])
     with tab1:
         ticker = st.text_input("Enter Stock Ticker", "AAPL").strip().upper()
@@ -242,8 +311,9 @@ def main():
     with tab5:
         render_sentiment_tab()
     with tab6:
+        render_insider_sentiment_tab()
+    with tab7:
         render_trading_tab()
-
 
 if __name__ == "__main__":
     main()
